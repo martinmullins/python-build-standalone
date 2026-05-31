@@ -98,8 +98,16 @@ else
 fi
 
 
+CONFIGURE_TARGET=""
+if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
+    CFLAGS="${CFLAGS} -m32"
+    CPPFLAGS="${CPPFLAGS} -m32"
+    CONFIGURE_TARGET="--target i686-linux-musl"
+fi
+
 CFLAGS="${CFLAGS}" CPPFLAGS="${CPPFLAGS}" ./configure \
     --prefix=/tools/host \
+    ${CONFIGURE_TARGET} \
     "${SHARED}"
 
 make -j "$(nproc)"

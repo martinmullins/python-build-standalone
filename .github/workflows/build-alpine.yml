@@ -1,0 +1,210 @@
+name: Build Python 3.14 for Alpine Linux 3.14 / iSH (i686 musl)
+
+# Builds a fully static Python 3.14 for 32-bit x86 musl (Alpine Linux 3.14 / iSH).
+#
+# The lto+static build links everything statically so no host musl version
+# compatibility issues arise — the binary runs on any Alpine 3.x system or
+# inside iSH without installing additional libraries.
+#
+# After the workflow finishes, download the artifact from the Actions run page.
+# The tarball contains a self-contained Python installation under python/.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_options:
+        description: 'Build options'
+        required: true
+        default: 'lto+static'
+        type: choice
+        options:
+          - lto+static
+          - lto
+          - debug+static
+          - debug
+
+env:
+  FORCE_COLOR: 1
+  PYTHON_VERSION: "3.14"
+  TARGET_TRIPLE: "i686-unknown-linux-musl"
+
+permissions: {}
+
+jobs:
+  build-crate:
+    name: Build pythonbuild crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Emit rustc version
+        run: rustc --version > .rustc-version
+
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-pythonbuild-${{ hashFiles('Cargo.lock', '.rustc-version') }}
+
+      - name: Build
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pythonbuild
+          path: target/release/pythonbuild
+
+  build-image:
+    name: Build Docker image / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [build, gcc]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Dockerfiles
+        run: |
+          ./build.py --make-target empty
+          repo_name=$(echo "${GITHUB_REPOSITORY,,}" | sed 's|\.|_|g')
+          git_ref_name=$(echo "${GITHUB_REF_NAME,,}" | sed 's|[^a-z0-9_-]|_|g')
+          echo "REPO_NAME=${repo_name}" >> "${GITHUB_ENV}"
+          echo "GIT_REF_NAME=${git_ref_name}" >> "${GITHUB_ENV}"
+
+      - name: Build Docker Image
+        id: build-image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        env:
+          SOURCE_DATE_EPOCH: 0
+          DOCKER_BUILD_SUMMARY: false
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: build/${{ matrix.name }}.Dockerfile
+          labels: org.opencontainers.image.source=https://github.com/${{ env.REPO_NAME }}
+          # Cache from this repo, then from upstream astral-sh repo
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ env.REPO_NAME }}:${{ matrix.name }}-linux_x86_64-${{ env.GIT_REF_NAME }}
+            type=registry,ref=ghcr.io/${{ env.REPO_NAME }}:${{ matrix.name }}-linux_x86_64-main
+            type=registry,ref=ghcr.io/astral-sh/python-build-standalone:${{ matrix.name }}-linux_x86_64-main
+          cache-to: |
+            type=registry,ref=ghcr.io/${{ env.REPO_NAME }}:${{ matrix.name }}-linux_x86_64-${{ env.GIT_REF_NAME }},ignore-error=true
+          outputs: |
+            type=docker,dest=build/image-${{ matrix.name }}.linux_x86_64.tar
+
+      - name: Compress Image
+        run: |
+          echo "${{ steps.build-image.outputs.imageid }}" > "build/image-${{ matrix.name }}.linux_x86_64"
+          zstd -v -T0 -6 --rm build/image-*.tar
+          touch -t 197001010000 build/image-*
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: image-${{ matrix.name }}-linux_x86_64
+          path: build/image-*
+          compression-level: '0'
+
+  build:
+    name: ${{ env.TARGET_TRIPLE }} / ${{ inputs.build_options }}
+    needs:
+      - build-crate
+      - build-image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+
+      - name: Download pythonbuild
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: pythonbuild
+          path: build
+
+      - name: Download Docker images
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: image-*-linux_x86_64
+          path: build
+          merge-multiple: true
+
+      - name: Cache source downloads
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: build/downloads
+          key: ${{ env.TARGET_TRIPLE }}-${{ hashFiles('pythonbuild/downloads.py') }}
+          restore-keys: |
+            ${{ env.TARGET_TRIPLE }}-
+
+      - name: Load Docker Images
+        run: |
+          set -euo pipefail
+          for f in build/image-*.tar.zst; do
+            echo "decompressing ${f}"
+            zstd -d --rm "${f}"
+          done
+          for f in build/image-*.tar; do
+            echo "loading ${f}"
+            docker load --input "${f}" &
+          done
+          wait
+
+      - name: Build Python ${{ env.PYTHON_VERSION }}
+        run: |
+          chmod +x build/pythonbuild
+
+          # Generate per-target makefiles and expand Dockerfiles
+          ./build.py --make-target empty
+
+          # Ensure image timestamps are newer than the generated files
+          touch build/image-*
+
+          ./build.py \
+            --target-triple "${TARGET_TRIPLE}" \
+            --python "cpython-${PYTHON_VERSION}" \
+            --options "${BUILD_OPTIONS}"
+        env:
+          BUILD_OPTIONS: ${{ inputs.build_options }}
+
+      - name: Upload Distribution
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: cpython-${{ env.PYTHON_VERSION }}-${{ env.TARGET_TRIPLE }}-${{ inputs.build_options }}
+          path: dist/*
+          compression-level: '0'
+
+      - name: Validate Distribution
+        run: |
+          build/pythonbuild validate-distribution dist/*.tar.zst
