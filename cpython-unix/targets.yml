@@ -997,6 +997,55 @@ x86_64_v4-unknown-linux-musl:
     - zstd
   openssl_target: linux-x86_64
 
+i686-unknown-linux-musl:
+  host_platforms:
+    - linux_x86_64
+  pythons_supported:
+    - '3.10'
+    - '3.11'
+    - '3.12'
+    - '3.13'
+    - '3.14'
+    - '3.15'
+  needs_toolchain: true
+  host_cc: clang
+  host_cxx: clang++
+  target_cc: musl-clang
+  target_cxx: clang++
+  target_cflags:
+    - '-m32'
+    - '-fvisibility=hidden'
+    - '-fno-omit-frame-pointer'
+    - '-mno-omit-leaf-frame-pointer'
+  target_ldflags:
+    - '-Wl,-z,noexecstack'
+  needs:
+    - autoconf
+    - bdb
+    - binutils
+    - bzip2
+    - expat
+    - libedit
+    - libffi-3.3
+    - libX11
+    - libXau
+    - libxcb
+    - m4
+    - mpdecimal
+    - musl
+    - ncurses
+    - openssl-3.5
+    - patchelf
+    - sqlite
+    - tcl
+    - tk
+    - uuid
+    - xorgproto
+    - xz
+    - zlib
+    - zstd
+  openssl_target: linux-x86
+
 aarch64-unknown-linux-musl:
   host_platforms:
     - linux_x86_64
