@@ -129,7 +129,7 @@ jobs:
           compression-level: '0'
 
   build:
-    name: ${{ env.TARGET_TRIPLE }} / ${{ inputs.build_options }}
+    name: i686-unknown-linux-musl / ${{ inputs.build_options }}
     needs:
       - build-crate
       - build-image
