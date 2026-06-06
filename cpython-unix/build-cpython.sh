@@ -661,7 +661,7 @@ if [ -n "${CROSS_COMPILING}" ]; then
     # answers are taken from the Linux kernel source's Kconfig files,
     # search for HAVE_EFFICIENT_UNALIGNED_ACCESS.
     case "${TARGET_TRIPLE}" in
-        arm64*|aarch64*|armv7*|thumb7*|ppc64*|s390*|x86*)
+        arm64*|aarch64*|armv7*|thumb7*|ppc64*|s390*|x86*|i686*)
             CONFIGURE_FLAGS="${CONFIGURE_FLAGS} ac_cv_aligned_required=no"
             ;;
     esac
@@ -1218,6 +1218,9 @@ x86_64-unknown-linux-*)
     else
         PYTHON_ARCH="x86_64-linux-gnu"
     fi
+    ;;
+i686-unknown-linux-musl)
+    PYTHON_ARCH="i386-linux-musl"
     ;;
 *)
     echo "unhandled target triple: ${TARGET_TRIPLE}"
