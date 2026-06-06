@@ -92,8 +92,8 @@ def add_target_env(env, build_platform, target_triple, build_env, build_options)
     extra_host_cflags = []
     extra_host_ldflags = []
 
-    # Add compiler-rt for aarch64-musl to resolve missing builtins
-    if target_triple == "aarch64-unknown-linux-musl":
+    # Add compiler-rt for musl targets to resolve missing builtins (e.g. __udivdi3 on i686)
+    if target_triple in ("aarch64-unknown-linux-musl", "i686-unknown-linux-musl"):
         extra_target_cflags.append("--rtlib=compiler-rt")
         extra_target_ldflags.append("--rtlib=compiler-rt")
 
