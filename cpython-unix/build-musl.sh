@@ -103,6 +103,25 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     CFLAGS="${CFLAGS} -m32"
     CPPFLAGS="${CPPFLAGS} -m32"
     CONFIGURE_TARGET="--target i686-linux-musl"
+
+    # Patch ld.musl-clang.in to prefer $libc_lib/libgcc.a over the system
+    # -print-file-name lookup. GCC's 32-bit libgcc.a (bundled below) provides
+    # __udivdi3 and other 64-bit helpers needed when linking i686 code with
+    # the LLVM toolchain that has no native i386 compiler-rt builtins.
+    {
+        while IFS= read -r line; do
+            if [[ "$line" == *'set -- "$@" $($cc -print-file-name=$file)'* ]]; then
+                echo '            if [ -f "$libc_lib/$file" ]; then'
+                echo '                set -- "$@" "$libc_lib/$file"'
+                echo '            else'
+                echo "                $line"
+                echo '            fi'
+            else
+                echo "$line"
+            fi
+        done < tools/ld.musl-clang.in
+    } > tools/ld.musl-clang.in.new
+    mv tools/ld.musl-clang.in.new tools/ld.musl-clang.in
 fi
 
 CFLAGS="${CFLAGS}" CPPFLAGS="${CPPFLAGS}" ./configure \
@@ -112,5 +131,15 @@ CFLAGS="${CFLAGS}" CPPFLAGS="${CPPFLAGS}" ./configure \
 
 make -j "$(nproc)"
 make -j "$(nproc)" install DESTDIR=/build/out
+
+if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
+    # Bundle GCC's 32-bit libgcc.a into the musl toolchain so ld.musl-clang
+    # can resolve __udivdi3 and other 64-bit soft helpers when linking i686
+    # binaries in containers that have no gcc-multilib installed.
+    LIBGCC=$(gcc -m32 -print-file-name=libgcc.a 2>/dev/null || true)
+    if [ -f "${LIBGCC}" ]; then
+        cp "${LIBGCC}" /build/out/tools/host/lib/libgcc.a
+    fi
+fi
 
 popd
