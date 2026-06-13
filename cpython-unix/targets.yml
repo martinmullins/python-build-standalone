@@ -1011,7 +1011,7 @@ i686-unknown-linux-musl:
   host_cc: clang
   host_cxx: clang++
   target_cc: musl-clang
-  target_cxx: clang++
+  target_cxx: musl-clang++
   target_cflags:
     - '-m32'
     - '-fvisibility=hidden'

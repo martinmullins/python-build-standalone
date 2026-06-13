@@ -104,18 +104,17 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     CPPFLAGS="${CPPFLAGS} -m32"
     CONFIGURE_TARGET="--target i686-linux-musl"
 
-    # Patch ld.musl-clang.in to prefer $libc_lib/libgcc.a over the system
-    # -print-file-name lookup. GCC's 32-bit libgcc.a (bundled below) provides
-    # __udivdi3 and other 64-bit helpers needed when linking i686 code with
-    # the LLVM toolchain that has no native i386 compiler-rt builtins.
+    # Patch ld.musl-clang.in so that libgcc.a (bundled below) is always
+    # linked before -lc. The LLVM toolchain defaults to compiler-rt rather
+    # than libgcc, so the standard -lgcc handler never fires. Inserting
+    # $libc_lib/libgcc.a unconditionally ensures __udivdi3 and other 64-bit
+    # helpers are available when linking 32-bit i686 binaries against musl.
     {
         while IFS= read -r line; do
-            if [[ "$line" == *'set -- "$@" $($cc -print-file-name=$file)'* ]]; then
-                echo '            if [ -f "$libc_lib/$file" ]; then'
-                echo '                set -- "$@" "$libc_lib/$file"'
-                echo '            else'
-                echo "                $line"
-                echo '            fi'
+            if [[ "$line" == *'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc -dynamic-linker "$ldso"'* ]]; then
+                echo 'lgcc='
+                echo 'test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
+                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" $lgcc -lc -dynamic-linker "$ldso"'
             else
                 echo "$line"
             fi
@@ -140,6 +139,15 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     if [ -f "${LIBGCC}" ]; then
         cp "${LIBGCC}" /build/out/tools/host/lib/libgcc.a
     fi
+
+    # Create musl-clang++ from musl-clang by switching the compiler binary from
+    # clang to clang++. Without this, CXX=clang++ fails C++ preprocessor sanity
+    # checks when CPPFLAGS contains -m32 (no 32-bit C++ headers on Debian), so
+    # autoconf falls back to /lib/cpp which also fails.
+    sed '/^cc=/s|clang$|clang++|' \
+        /build/out/tools/host/bin/musl-clang \
+        > /build/out/tools/host/bin/musl-clang++
+    chmod +x /build/out/tools/host/bin/musl-clang++
 fi
 
 popd
