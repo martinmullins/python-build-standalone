@@ -23,9 +23,12 @@ CONFIGURE_FLAGS="${CONFIGURE_FLAGS} ac_cv_func_pthread_yield=no"
 
 CFLAGS="${EXTRA_TARGET_CFLAGS} -fPIC"
 
-if [ "${CC}" = "clang" ]; then
+if [[ "${CC}" = "clang" || "${CC}" = "musl-clang" ]]; then
     # deprecated-non-prototype gets very chatty with Clang 15. Suppress it.
     CFLAGS="${CFLAGS} -Wno-deprecated-non-prototype"
+    # BDB's clib_port.h redefines localtime to __db_Clocaltime which lacks a
+    # forward declaration; modern clang treats implicit declarations as errors.
+    CFLAGS="${CFLAGS} -Wno-implicit-function-declaration -Wno-int-conversion"
 fi
 
 CFLAGS="${CFLAGS}" CPPFLAGS="${CFLAGS}" ../dist/configure \
