@@ -104,17 +104,24 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     CPPFLAGS="${CPPFLAGS} -m32"
     CONFIGURE_TARGET="--target i686-linux-musl"
 
-    # Patch ld.musl-clang.in so that libgcc.a (bundled below) is always
-    # linked before -lc. The LLVM toolchain defaults to compiler-rt rather
-    # than libgcc, so the standard -lgcc handler never fires. Inserting
-    # $libc_lib/libgcc.a unconditionally ensures __udivdi3 and other 64-bit
-    # helpers are available when linking 32-bit i686 binaries against musl.
+    # Patch ld.musl-clang.in to inject libgcc.a AFTER -lc in every linker
+    # exec line. The LLVM toolchain defaults to compiler-rt so clang never
+    # emits -lgcc; the standard -lgcc handler in ld.musl-clang never fires.
+    # libgcc.a must come after -lc because libc.a itself references __divdi3,
+    # __moddi3, __udivdi3, etc. — if libgcc.a precedes -lc, GNU ld has already
+    # passed it by the time those undefined refs appear and fails to resolve them.
+    # Both the dynamic (-dynamic-linker) and static (no dynamic linker) exec
+    # lines are patched to cover both shared and lto+static build variants.
     {
         while IFS= read -r line; do
             if [[ "$line" == *'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc -dynamic-linker "$ldso"'* ]]; then
                 echo 'lgcc='
                 echo 'test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
-                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" $lgcc -lc -dynamic-linker "$ldso"'
+                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc -dynamic-linker "$ldso"'
+            elif [[ "$line" == *'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc'* ]]; then
+                echo 'lgcc='
+                echo 'test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
+                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc'
             else
                 echo "$line"
             fi
@@ -133,8 +140,8 @@ make -j "$(nproc)" install DESTDIR=/build/out
 
 if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     # Bundle GCC's 32-bit libgcc.a into the musl toolchain so ld.musl-clang
-    # can resolve __udivdi3 and other 64-bit soft helpers when linking i686
-    # binaries in containers that have no gcc-multilib installed.
+    # can resolve __divdi3, __moddi3, __udivdi3 and other 64-bit soft-float
+    # helpers when linking i686 binaries (no gcc-multilib in build container).
     LIBGCC=$(gcc -m32 -print-file-name=libgcc.a 2>/dev/null || true)
     if [ -f "${LIBGCC}" ]; then
         cp "${LIBGCC}" /build/out/tools/host/lib/libgcc.a
