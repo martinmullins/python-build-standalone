@@ -139,6 +139,15 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     if [ -f "${LIBGCC}" ]; then
         cp "${LIBGCC}" /build/out/tools/host/lib/libgcc.a
     fi
+
+    # Create musl-clang++ from musl-clang by switching the compiler binary from
+    # clang to clang++. Without this, CXX=clang++ fails C++ preprocessor sanity
+    # checks when CPPFLAGS contains -m32 (no 32-bit C++ headers on Debian), so
+    # autoconf falls back to /lib/cpp which also fails.
+    sed '/^cc=/s|clang$|clang++|' \
+        /build/out/tools/host/bin/musl-clang \
+        > /build/out/tools/host/bin/musl-clang++
+    chmod +x /build/out/tools/host/bin/musl-clang++
 fi
 
 popd
