@@ -104,24 +104,26 @@ if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
     CPPFLAGS="${CPPFLAGS} -m32"
     CONFIGURE_TARGET="--target i686-linux-musl"
 
-    # Patch ld.musl-clang.in to inject libgcc.a AFTER -lc in every linker
-    # exec line. The LLVM toolchain defaults to compiler-rt so clang never
-    # emits -lgcc; the standard -lgcc handler in ld.musl-clang never fires.
-    # libgcc.a must come after -lc because libc.a itself references __divdi3,
+    # Patch ld.musl-clang.in to inject libgcc.a and libatomic.a AFTER -lc in
+    # every linker exec line. The LLVM toolchain defaults to compiler-rt so
+    # clang never emits -lgcc; the standard handler never fires.
+    # libgcc.a must come after -lc: libc.a internally references __divdi3,
     # __moddi3, __udivdi3, etc. — if libgcc.a precedes -lc, GNU ld has already
-    # passed it by the time those undefined refs appear and fails to resolve them.
+    # passed it by the time those undefined refs appear.
+    # libatomic.a is needed for 64-bit atomic ops (__atomic_store, etc.) which
+    # cannot be done inline on 32-bit x86 (e.g. used by OpenSSL threads_pthread.c).
     # Both the dynamic (-dynamic-linker) and static (no dynamic linker) exec
     # lines are patched to cover both shared and lto+static build variants.
     {
         while IFS= read -r line; do
             if [[ "$line" == *'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc -dynamic-linker "$ldso"'* ]]; then
-                echo 'lgcc='
-                echo 'test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
-                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc -dynamic-linker "$ldso"'
+                echo 'lgcc=; test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
+                echo 'latomic=; test -f "$libc_lib/libatomic.a" && latomic="$libc_lib/libatomic.a"'
+                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc $latomic -dynamic-linker "$ldso"'
             elif [[ "$line" == *'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc'* ]]; then
-                echo 'lgcc='
-                echo 'test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
-                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc'
+                echo 'lgcc=; test -f "$libc_lib/libgcc.a" && lgcc="$libc_lib/libgcc.a"'
+                echo 'latomic=; test -f "$libc_lib/libatomic.a" && latomic="$libc_lib/libatomic.a"'
+                echo 'exec $($cc -print-prog-name=ld) -nostdlib "$@" -lc $lgcc $latomic'
             else
                 echo "$line"
             fi
@@ -139,12 +141,16 @@ make -j "$(nproc)"
 make -j "$(nproc)" install DESTDIR=/build/out
 
 if [[ "${TARGET_TRIPLE:-}" == i686-* ]]; then
-    # Bundle GCC's 32-bit libgcc.a into the musl toolchain so ld.musl-clang
-    # can resolve __divdi3, __moddi3, __udivdi3 and other 64-bit soft-float
-    # helpers when linking i686 binaries (no gcc-multilib in build container).
+    # Bundle GCC's 32-bit libgcc.a and libatomic.a into the musl toolchain so
+    # ld.musl-clang can resolve 64-bit arithmetic and atomic helpers when
+    # linking i686 binaries (no gcc-multilib in the build container).
     LIBGCC=$(gcc -m32 -print-file-name=libgcc.a 2>/dev/null || true)
     if [ -f "${LIBGCC}" ]; then
         cp "${LIBGCC}" /build/out/tools/host/lib/libgcc.a
+    fi
+    LIBATOMIC=$(gcc -m32 -print-file-name=libatomic.a 2>/dev/null || true)
+    if [ -f "${LIBATOMIC}" ]; then
+        cp "${LIBATOMIC}" /build/out/tools/host/lib/libatomic.a
     fi
 
     # Create musl-clang++ from musl-clang by switching the compiler binary from
